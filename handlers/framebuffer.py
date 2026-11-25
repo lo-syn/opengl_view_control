@@ -1,4 +1,4 @@
-from .osc import OSC_HOST, OSC_PORT, OscHandler, osc_string
+from .osc import OSC_HOST, OSC_PORT, OscHandler, osc_message
 
 
 KEY_PRESS_TO_FB_MAP = {
@@ -11,6 +11,7 @@ FRAME_BUFFER_STATE = {
     0: "<empty>",
     1: "<empty>",
     2: "<empty>",
+    None: "<empty>"
 }
 
 class FrameBufferHandler:
@@ -25,12 +26,10 @@ class FrameBufferHandler:
             if current_name == name:
                 name = None
             self.framebuffer_status[fb_name] = name
-        if name is None:
-            return "<empty>"
         return name
 
-    def enable_fb(self, fb: int) -> str|None:
-        fb_enable_osc = osc_string(f"fb_{fb}")
+    def enable_fb(self, fb_no: int) -> None:
+        fb_enable_osc = osc_message(f"/fb{str(fb_no)}", empty=True)
         self.osc_handler.udp_socket.sendto(fb_enable_osc, (OSC_HOST, OSC_PORT))
 
     

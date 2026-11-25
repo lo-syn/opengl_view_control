@@ -1,6 +1,6 @@
 {
     "shaders": {
-        "directory_path": "C:\\of\\apps\\myApps\\opengl_view\\bin\\data\\Shaders",
+        "directory_path": "C:\\of_vs2022\\apps\\myApps\\opengl_view\\bin\\data\\Shaders",
         "file_extensions": [".frag", ".fs"]
     },
     "midi": {

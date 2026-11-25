@@ -286,10 +286,10 @@ class DefaultMenu(QWidget):
     def number_key_pressed(self, item: QListWidgetItem, key_no: int):
         if self.current_page == "shaders":
             # Sets the shader to the specified framebuffer
-            shader = item.data(Qt.ItemDataRole.UserRole)
-            if Path(shader).is_dir():
+            shader_path = item.data(Qt.ItemDataRole.UserRole)
+            if Path(shader_path).is_dir():
                 return
-            shader = Path(shader).name
+            shader = Path(shader_path).name
             label = getattr(self, f"fb{KEY_PRESS_TO_FB_MAP[key_no]}_label")
             is_loaded = self.framebuffer_handler.load_to_fb(KEY_PRESS_TO_FB_MAP[key_no], shader)
             label.setText(f"fb{KEY_PRESS_TO_FB_MAP[key_no]}: {is_loaded}")
@@ -297,7 +297,10 @@ class DefaultMenu(QWidget):
             # Sends the enable framebuffer command via OSC
             self.framebuffer_handler.enable_fb(KEY_PRESS_TO_FB_MAP[key_no])
             # Sends the shader filepath via OSC
-            self.shader_handler.send_shader(shader)
+            if not is_loaded:
+                self.shader_handler.send_shader(shader_path, reset=True)
+            else:
+                self.shader_handler.send_shader(shader_path)
 
 
     def clear_message(self):
