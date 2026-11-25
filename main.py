@@ -5,13 +5,16 @@ from pathlib import Path
 
 from handlers.browser import BrowserHandler
 from handlers.midi import MidiHandler
-from handlers.osc import OscHandler, OSC_HOST, OSC_PORT, osc_string
+from handlers.osc import OscHandler
+from handlers.shader import ShaderHandler
+from handlers.framebuffer import FrameBufferHandler, KEY_PRESS_TO_FB_MAP
+
 from handlers.audio import (
     AudioHandler,
     AudioOutputRouter,
     BLUETOOTH_CAPTURE_SINK,
 )
-from schema import DefaultMenuItem, ShaderItem, SettingsMenuItem, ShaderPackItem
+from schema import DefaultMenuItem, ShaderItem, SettingsMenuItem
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QKeyEvent
@@ -35,6 +38,9 @@ class DefaultListWidget(QListWidget):
     navigateRight = pyqtSignal()
     navigateLeft = pyqtSignal()
     closeRequested = pyqtSignal()
+    keypress1 = pyqtSignal(QListWidgetItem)
+    keypress2 = pyqtSignal(QListWidgetItem)
+    keypress3 = pyqtSignal(QListWidgetItem)
 
     def keyPressEvent(self, event: QKeyEvent):
          # Handle key events for activating items and navigating
@@ -46,6 +52,24 @@ class DefaultListWidget(QListWidget):
             item = self.currentItem()
             if item is not None:
                 self.activateCurrentItem.emit(item)
+            event.accept()
+            return
+        if event.key() == Qt.Key.Key_1:
+            item = self.currentItem()
+            if item is not None:
+                self.keypress1.emit(item)
+            event.accept()
+            return
+        if event.key() == Qt.Key.Key_2:
+            item = self.currentItem()
+            if item is not None:
+                self.keypress2.emit(item)
+            event.accept()
+            return
+        if event.key() == Qt.Key.Key_3:
+            item = self.currentItem()
+            if item is not None:
+                self.keypress3.emit(item)
             event.accept()
             return
         if event.key() == Qt.Key.Key_Right:
@@ -67,7 +91,8 @@ class DefaultMenu(QWidget):
         with settings_path.open("r", encoding="utf-8") as settings_file:
             self.app_settings = json.load(settings_file)
 
-        default_shader_dir = Path(self.app_settings["shaders"]["directory_path"])
+        self.default_shader_dir = Path(self.app_settings["shaders"]["directory_path"])
+        self.shader_browser_filter: list[str] = self.app_settings["shaders"]["file_extensions"]
 
         self.settings = {
             "enable_midi": SettingsMenuItem(
@@ -88,8 +113,10 @@ class DefaultMenu(QWidget):
 
         # Add handlers
         self.osc_handler = OscHandler()
+        self.shader_handler = ShaderHandler(self.osc_handler)
+        self.framebuffer_handler = FrameBufferHandler()
         self.audio_handler = None
-        self.active_shader = None
+        self.active_shader = "test"
         self.active_shader_owner = None
 
         # Audio mode state: 0=disabled, 1=audio_file
@@ -125,16 +152,28 @@ class DefaultMenu(QWidget):
         self.title.setStyleSheet("color: #fff; font-size: 9pt;")
         layout.addWidget(self.title)
 
-        self.status_bar = QLabel()
-        self.status_bar.setAlignment(
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
-        )
+        self.status_bar = QWidget()
         self.status_bar.setMinimumHeight(28)
         self.status_bar.setStyleSheet(
-            "QLabel { background-color: #222; color: #fff; padding: 4px 6px; }"
+            "QWidget { background-color: #222; color: #fff; }"
         )
+        status_layout = QHBoxLayout(self.status_bar)
+        status_layout.setContentsMargins(0, 0, 0, 0)
+        status_layout.setSpacing(0)
+        self.fb0_label = QLabel()
+        self.fb1_label = QLabel()
+        self.fb2_label = QLabel()
+        for index, label in enumerate(
+            (self.fb0_label, self.fb1_label, self.fb2_label)
+        ):
+            label.setAlignment(
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+            )
+            separator = " border-right: 1px solid #555;" if index < 2 else ""
+            label.setStyleSheet(f"QLabel {{ padding: 4px 6px;{separator} }}")
+            status_layout.addWidget(label, 1)
         layout.addWidget(self.status_bar)
-        self.update_active_shader_status()
+        self.update_framebuffer_status(self.framebuffer_handler)
 
         self.list_widget = DefaultListWidget()
         self.list_widget.setSpacing(3)
@@ -146,6 +185,9 @@ class DefaultMenu(QWidget):
         self.list_widget.currentRowChanged.connect(self.update_selected_row)
 
         self.list_widget.navigateRight.connect(self.navigate_right)
+        self.list_widget.keypress1.connect(lambda item: self.number_key_pressed(item, 1))
+        self.list_widget.keypress2.connect(lambda item: self.number_key_pressed(item, 2))
+        self.list_widget.keypress3.connect(lambda item: self.number_key_pressed(item, 3))
         self.list_widget.navigateLeft.connect(self.navigate_left)
         self.list_widget.closeRequested.connect(self.close)
 
@@ -168,10 +210,7 @@ class DefaultMenu(QWidget):
         self.midi_timer = None
 
         # Show shader menu by default
-        
-        self.browser_handler = BrowserHandler(default_shader_dir)
-        self.current_browser_filter = self.app_settings["shaders"]["file_extensions"]
-        self.show_shaders(self.browser_handler)
+        self.show_shaders()
 
     def update_selected_row(self, selected_row: int):
         self.clear_message()
@@ -181,54 +220,18 @@ class DefaultMenu(QWidget):
                 background = "#555" if row_index == selected_row else "transparent"
                 row.setStyleSheet(f"background-color: {background};")
 
-    def _populate_menu(
-        self,
-        menu_items: dict[str, DefaultMenuItem],
-        offset: bool = False,
-        after_item: QListWidgetItem | None = None,
-        pack_name: str | None = None,
-    ):
-        insertion_row = self.list_widget.count()
-        if after_item is not None:
-            insertion_row = self.list_widget.row(after_item)
-            if insertion_row < 0:
-                raise ValueError("Menu item does not belong to this list")
-            insertion_row += 1
-
-        for name, menu_item in menu_items.items():
-            item = QListWidgetItem()
-            item.setData(Qt.ItemDataRole.UserRole, name)
-            item.setData(Qt.ItemDataRole.UserRole + 1, offset)
-            item.setData(Qt.ItemDataRole.UserRole + 2, pack_name)
-            row = self._create_row(name, menu_item, offset, pack_name)
-            self.list_widget.insertItem(insertion_row, item)
-            insertion_row += 1
-            item.setSizeHint(row.sizeHint())
-            self.list_widget.setItemWidget(item, row)
-
-    def _collapse_menu(self, pack_name: str):
-        for row_index in reversed(range(self.list_widget.count())):
-            item = self.list_widget.item(row_index)
-            if item.data(Qt.ItemDataRole.UserRole + 2) != pack_name:
-                continue
-
-            name = item.data(Qt.ItemDataRole.UserRole)
-            self.shader_status_labels.pop((pack_name, name), None)
-            row = self.list_widget.itemWidget(item)
-            self.list_widget.removeItemWidget(item)
-            self.list_widget.takeItem(row_index)
-            if row is not None:
-                row.deleteLater()
-
-    def show_shaders(self, browser_handler: BrowserHandler):
+    def show_shaders(self):
         self.clear_message()
         # Show shader menu
         self.current_page = "shaders"
         self.title.setText("SHADER")
         self.list_widget.clear()
+
+        # Browser handler and filter, specifically for shaders
+        self.browser_handler = BrowserHandler(self.default_shader_dir, self.shader_browser_filter)
+        
         self.shader_status_labels.clear()
-        self.current_browser_filter = [".frag", ".fs"]
-        browser_handler.populate(self.list_widget, browser_filter=self.current_browser_filter)
+        self.browser_handler.populate(self.list_widget)
 
         self.active_shader_pack = None
         self.list_widget.setCurrentRow(0)
@@ -254,6 +257,20 @@ class DefaultMenu(QWidget):
             return
         self.list_widget.setCurrentRow(0)
 
+    def _populate_menu(
+        self,
+        menu_items: dict[str, DefaultMenuItem],
+    ):
+        insertion_row = 0
+        for name, menu_item in menu_items.items():
+            item = QListWidgetItem()
+            item.setData(Qt.ItemDataRole.UserRole, name)
+            row = self._create_settings_row(name, menu_item)
+            self.list_widget.insertItem(insertion_row, item)
+            insertion_row += 1
+            item.setSizeHint(row.sizeHint())
+            self.list_widget.setItemWidget(item, row)
+
     def navigate_right(self):
         if self.current_page == "shaders":
             self.show_settings()
@@ -266,13 +283,27 @@ class DefaultMenu(QWidget):
         elif self.current_page == "settings":
             self.show_shaders()
 
+    def number_key_pressed(self, item: QListWidgetItem, key_no: int):
+        if self.current_page == "shaders":
+
+            shader = item.data(Qt.ItemDataRole.UserRole)
+            
+            if Path(shader).is_dir():
+                return
+            shader = Path(shader).name
+            label = getattr(self, f"fb{KEY_PRESS_TO_FB_MAP[key_no]}_label")
+            is_loaded = self.framebuffer_handler.load_to_fb(KEY_PRESS_TO_FB_MAP[key_no], shader)
+            label.setText(f"fb{KEY_PRESS_TO_FB_MAP[key_no]}: {is_loaded}")
+            self.shader_handler.send_shader(shader)
+
+
     def clear_message(self):
         self.message_bar.clear()
 
-    def update_active_shader_status(self):
-        # Add active shader to status bar
-        shader_name = self.active_shader if self.active_shader is not None else ""
-        self.status_bar.setText(f"Active Shader: {shader_name}")
+    def update_framebuffer_status(self, framebuffer_handler: FrameBufferHandler):
+        self.fb0_label.setText(f"fb0: {framebuffer_handler.framebuffer_status[0]}")
+        self.fb1_label.setText(f"fb1: {framebuffer_handler.framebuffer_status[1]}")
+        self.fb2_label.setText(f"fb2: {framebuffer_handler.framebuffer_status[2]}")
 
     def set_midi_enabled(self, enabled: bool) -> bool:
         if enabled:
@@ -372,7 +403,6 @@ class DefaultMenu(QWidget):
             self.output_router.disconnect()
             self._apply_audio_output()
             self.output_device_index = -1
-            self.update_active_shader_status()
             return False
 
         devices = self._available_audio_outputs()
@@ -393,7 +423,6 @@ class DefaultMenu(QWidget):
             self._audio_output_failed(device.description())
             return False
         self._apply_audio_output()
-        self.update_active_shader_status()
         return True
     
     def _stop_all_audio(self):
@@ -409,28 +438,21 @@ class DefaultMenu(QWidget):
         self.message_bar.setText(text)
         QApplication.processEvents()
 
-    def _create_row(
-        self, name: str, menu_item: DefaultMenuItem, offset: bool = False,
-        pack_name: str | None = None,
+    def _create_settings_row(
+        self, name: str, menu_item: DefaultMenuItem
     ):
         row = QWidget()
         row_layout = QHBoxLayout(row)
-        row_layout.setContentsMargins(40 if offset else 0, 0, 0, 0)
+        row_layout.setContentsMargins(0, 0, 0, 0)
         row_layout.addWidget(QLabel(name))
         row_layout.addStretch()
 
         
         # Special handling for audio mode display
-        if pack_name is None and name == "enable_audio_input":
+        if name == "enable_audio_input":
             status = QLabel(self.settings[name].status_labels[self.audio_mode])
-        elif (
-            pack_name is None
-            and name == "enable_audio_output"
-            and self.output_router.device is not None
-        ):
+        elif name == "enable_audio_output" and self.output_router.device is not None:
             status = QLabel(self.output_router.device.description())
-        elif pack_name is None and name in self.shader_packs:
-            status = QLabel()
 
         elif menu_item.state:
             status = QLabel(menu_item.on_state_msg)
@@ -438,10 +460,7 @@ class DefaultMenu(QWidget):
             status = QLabel(menu_item.off_state_msg)
         
         status.setObjectName("activeStatus")
-        if pack_name is None:
-            self.status_labels[name] = status
-        else:
-            self.shader_status_labels[(pack_name, name)] = status
+        self.status_labels[name] = status
         row_layout.addWidget(status)
         return row
 
@@ -482,56 +501,18 @@ class DefaultMenu(QWidget):
             else:
                 self.status_labels[name].setText(current_setting.off_state_msg)
 
-    def _run_shader_option(self, name: str, pack_name: str):
-        pack = self.shader_packs[pack_name]
-        if name not in pack.shaders:
-            self._update_message("Attempting to run missing shader")
-            return
-        if self.active_shader_pack is not pack:
-            self.active_shader_pack = pack
-            self.send_shader_pack(pack_name)
-        current_shader: ShaderItem = pack.shaders[name]
-        status = self.shader_status_labels[(pack_name, name)]
-        # Reset if already active
-        if self.active_shader == name and self.active_shader_owner == pack_name:
-            current_shader.state = False
-            status.setText(current_shader.off_state_msg)
-            self.active_shader = None
-            self.active_shader_owner = None
-            self.update_active_shader_status()
-            self.send_shader("reset")
-            return
-        # Set off message for previous shader
-        if self.active_shader is not None:
-            previous_shader = self.shader_packs[self.active_shader_owner].shaders[self.active_shader]
-            previous_shader.state = False
-            previous_status = self.shader_status_labels.get(
-                (self.active_shader_owner, self.active_shader)
-            )
-            if previous_status is not None:
-                previous_status.setText(previous_shader.off_state_msg)
-
-        # Set active shader
-        self.active_shader = name
-        self.active_shader_owner = pack_name
-        self.update_active_shader_status()
-        current_shader.state = True
-        status.setText(current_shader.on_state_msg)
-        self.send_shader(name)
-
     def activate_item(self, item):
         self.clear_message()
         name = item.data(Qt.ItemDataRole.UserRole)
         if Path(name).is_dir():
-            self.browser_handler.toggle_directory(self.list_widget, item, self.current_browser_filter)
+            self.browser_handler.toggle_directory(self.list_widget, item)
             return
 
         if self.current_page == "settings":
             self._run_settings_option(name)
             return
         if self.current_page == "shaders":
-
-            self.send_shader(name)
+            self.shader_handler.send_shader(name)
             return
         if self.current_page == "browser":
             try:
@@ -539,10 +520,6 @@ class DefaultMenu(QWidget):
             except OSError as error:
                 self._update_message(f"Could not read directory: {error}")
             return
-
-    def send_shader(self, name):
-        packet = osc_string("/shader") + osc_string(",s") + osc_string(name)
-        self.osc_handler.udp_socket.sendto(packet, (OSC_HOST, OSC_PORT))
 
     def keyPressEvent(self, event: QKeyEvent):
         if event.key() == Qt.Key.Key_Escape:

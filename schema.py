@@ -2,8 +2,6 @@ from dataclasses import dataclass, field
 from typing import Optional
 from collections.abc import Callable
 
-#from lib_shader_send import 
-
 @dataclass
 class DefaultMenuItem:
     state: bool | None = False

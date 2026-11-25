@@ -10,11 +10,12 @@ _DEPTH_ROLE = Qt.ItemDataRole.UserRole + 2
 DEFAULT_BROWSER_PATH = r"C:\Users\Laurence\Documents\Video Art\opengl_view\bin\data"
 
 class BrowserHandler:
-    def __init__(self, directory: Path | str):
+    def __init__(self, directory: Path | str, browser_filter: list[str] | None = None):
         self.directory = Path(directory) if not isinstance(directory, Path) else directory
         self._expanded_directories: set[Path] = set()
+        self.browser_filter = browser_filter or []
 
-    def populate(self, list_widget: QListWidget, browser_filter: list[str] | None = None) -> None:
+    def populate(self, list_widget: QListWidget) -> None:
         self._expanded_directories.clear()
         list_widget.clear()
         entries = sorted(self.directory.iterdir(), key=lambda entry: entry.name.casefold())
@@ -22,10 +23,10 @@ class BrowserHandler:
         for entry in entries:
             if entry.is_dir():
                 list_widget.addItem(self._create_item(entry))
-            elif browser_filter is None or entry.suffix in browser_filter:
+            elif self.browser_filter is None or entry.suffix in self.browser_filter:
                 list_widget.addItem(self._create_item(entry))
 
-    def toggle_directory(self, list_widget: QListWidget, item: QListWidgetItem, browser_filter: list[str] | None = None) -> None:
+    def toggle_directory(self, list_widget: QListWidget, item: QListWidgetItem) -> None:
         if item is None or not item.data(_DIRECTORY_ROLE):
             return
 
@@ -41,7 +42,7 @@ class BrowserHandler:
         # Directories are allowed regardless of the browser filter
         inserted_count = 0
         for entry in entries:
-            if browser_filter is None or entry.is_dir() or entry.suffix in browser_filter:
+            if entry.is_dir() or entry.suffix in self.browser_filter:
                 list_widget.insertItem(
                     insertion_row + inserted_count, self._create_item(entry, depth=depth)
                 )
