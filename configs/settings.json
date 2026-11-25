@@ -18,7 +18,7 @@
         }
     },
     "audio": {
-        "file_path": "bin/data/Plata - Kru (MssingNo Remix).mp3",
+        "file_path": "data/Jook - Growing Together.mp3",
         "osc_addresses": [
             "/u_x0",
             "/u_x1",

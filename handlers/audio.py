@@ -26,11 +26,11 @@ from PyQt6.QtMultimedia import (
 from .osc import OscHandler
 from .bluetooth import BluetoothAudioManager, BluetoothDevice
 
-# Import MIDI related settings from JSON file
+# Import audio settings from JSON file
 with open(Path(__file__).resolve().parent.parent / "configs" / "settings.json", "r") as f:
     settings = json.load(f)
 
-AUDIO_FILE_PATH = Path(__file__).resolve().parent / settings["audio"]["file_path"]
+AUDIO_FILE_PATH = (Path(__file__).resolve().parent.parent / settings["audio"]["file_path"]).resolve()
 AUDIO_OSC_ADDRESSES = settings["audio"]["osc_addresses"]
 
 # Load Bluetooth device configuration
@@ -84,6 +84,7 @@ class AudioOutputRouter:
         return True
 
     def _state_changed(self, state: QAudio.State) -> None:
+        # Handles state changes for the audio sink, logging errors and notifying on failure.
         if (self.sink is not None and self.device is not None
                 and state == QAudio.State.StoppedState
                 and self.sink.error() not in (QAudio.Error.NoError, QAudio.Error.UnderrunError)):
@@ -92,6 +93,7 @@ class AudioOutputRouter:
             self.on_error(name)
 
     def write(self, data: bytes) -> None:
+        # Writes PCM data to the audio sink, handling partial writes and notifying on failure.
         if self.sink is None or self.stream is None:
             return
         size = min(len(data), max(0, self.sink.bytesFree()))
@@ -102,6 +104,7 @@ class AudioOutputRouter:
                 self.on_error(self.device.description())
 
     def disconnect(self) -> None:
+        # Disconnects the audio sink, stopping it and clearing references to the device and stream.
         sink = self.sink
         self.sink = None
         self.stream = None

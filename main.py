@@ -111,8 +111,8 @@ class DefaultMenu(QWidget):
                 linked_function=self.set_midi_enabled,
             ),
             "enable_audio_input": SettingsMenuItem(
-                status_labels=["disabled", "bluetooth", "audio_file"],
-                linked_function=self.set_audio_enabled,
+                status_labels=["disabled", "audio_file","bluetooth"],
+                linked_function=self.set_audio_input_enabled,
             ),
             "enable_audio_output": SettingsMenuItem(
                 on_state_msg="enabled",
@@ -349,10 +349,10 @@ class DefaultMenu(QWidget):
             self.midi_handler = None
         return False
 
-    def set_audio_enabled(self, enabled: bool) -> bool:
+    def set_audio_input_enabled(self, enabled: bool) -> bool:
         """
         Cycle through audio modes:
-        - Disabled (0) → Bluetooth (1) → Audio File (2) → Disabled (0)
+        - Disabled (0)  → Audio File (1) → Bluetooth (2) → Disabled (0)
         
         When enabled=True, advance to next mode.
         When enabled=False, go to disabled mode.
@@ -367,7 +367,7 @@ class DefaultMenu(QWidget):
                 # Disable all audio modes
                 self._stop_all_audio()
                 # Disconnect only the input device, leaving output devices available.
-                if previous_mode == 1:
+                if previous_mode == 2:
                     self._disconnect_bluetooth_input()
                 self.audio_mode = 0
                 self._sync_bluetooth_input_route()
@@ -376,7 +376,7 @@ class DefaultMenu(QWidget):
             # Cycle to next audio mode: 0 → 1 → 2 → 0
             self.audio_mode = (self.audio_mode + 1) % 3
             
-            if self.audio_mode == 1:
+            if self.audio_mode == 2:
                 # Switch to Bluetooth mode
                 self._stop_all_audio()
                 if not self._sync_bluetooth_input_route():
@@ -417,13 +417,13 @@ class DefaultMenu(QWidget):
                 # User can pair their device first if needed
                 return True
             
-            elif self.audio_mode == 2:
+            elif self.audio_mode == 1:
                 # Switch to file audio and disconnect the previous Bluetooth input.
                 self._stop_all_audio()
                 if not self._sync_bluetooth_input_route():
                     self.audio_mode = 0
                     return False
-                if previous_mode == 1:
+                if previous_mode == 2:
                     self._disconnect_bluetooth_input()
                 if self.file_audio_handler is None:
                     self.file_audio_handler = AudioHandler(self.osc_handler)
@@ -436,7 +436,7 @@ class DefaultMenu(QWidget):
                 # Disabled (disconnect the previous Bluetooth input).
                 self._stop_all_audio()
                 self._sync_bluetooth_input_route()
-                if previous_mode == 1:
+                if previous_mode == 2:
                     self._disconnect_bluetooth_input()
                 return False
         except (ImportError, FileNotFoundError) as error:
@@ -491,6 +491,7 @@ class DefaultMenu(QWidget):
                 handler.set_output_router(self.output_router)
 
     def _audio_output_failed(self, name: str) -> None:
+        # Handles closing output router and logging failure
         self.output_router.disconnect()
         self._apply_audio_output()
         self.settings["enable_audio_output"].state = False
@@ -507,6 +508,7 @@ class DefaultMenu(QWidget):
 
     @staticmethod
     def _available_audio_outputs():
+        """Return a list of available audio output devices, excluding the Bluetooth capture sink."""
         return [
             device
             for device in QMediaDevices.audioOutputs()
