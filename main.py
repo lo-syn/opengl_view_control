@@ -14,7 +14,7 @@ from handlers.audio import (
     AudioOutputRouter,
     BLUETOOTH_CAPTURE_SINK,
 )
-from schema import DefaultMenuItem, ShaderItem, SettingsMenuItem
+from schema import DefaultMenuItem, SettingsMenuItem
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QKeyEvent
@@ -114,7 +114,7 @@ class DefaultMenu(QWidget):
         # Add handlers
         self.osc_handler = OscHandler()
         self.shader_handler = ShaderHandler(self.osc_handler)
-        self.framebuffer_handler = FrameBufferHandler()
+        self.framebuffer_handler = FrameBufferHandler(self.osc_handler)
         self.audio_handler = None
         self.active_shader = "test"
         self.active_shader_owner = None
@@ -285,15 +285,18 @@ class DefaultMenu(QWidget):
 
     def number_key_pressed(self, item: QListWidgetItem, key_no: int):
         if self.current_page == "shaders":
-
+            # Sets the shader to the specified framebuffer
             shader = item.data(Qt.ItemDataRole.UserRole)
-            
             if Path(shader).is_dir():
                 return
             shader = Path(shader).name
             label = getattr(self, f"fb{KEY_PRESS_TO_FB_MAP[key_no]}_label")
             is_loaded = self.framebuffer_handler.load_to_fb(KEY_PRESS_TO_FB_MAP[key_no], shader)
             label.setText(f"fb{KEY_PRESS_TO_FB_MAP[key_no]}: {is_loaded}")
+
+            # Sends the enable framebuffer command via OSC
+            self.framebuffer_handler.enable_fb(KEY_PRESS_TO_FB_MAP[key_no])
+            # Sends the shader filepath via OSC
             self.shader_handler.send_shader(shader)
 
 

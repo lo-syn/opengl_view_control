@@ -1,7 +1,4 @@
-from dataclasses import asdict, dataclass
-from enum import Enum
-
-from PyQt6.QtWidgets import QLabel
+from .osc import OSC_HOST, OSC_PORT, OscHandler, osc_string
 
 
 KEY_PRESS_TO_FB_MAP = {
@@ -17,8 +14,9 @@ FRAME_BUFFER_STATE = {
 }
 
 class FrameBufferHandler:
-    def __init__(self):
+    def __init__(self, osc_handler: OscHandler):
         self.framebuffer_status = FRAME_BUFFER_STATE.copy()
+        self.osc_handler = osc_handler
 
 
     def load_to_fb(self, fb: int, name: str | None) -> str|None:
@@ -30,4 +28,10 @@ class FrameBufferHandler:
         if name is None:
             return "<empty>"
         return name
+
+    def enable_fb(self, fb: int) -> str|None:
+        fb_enable_osc = osc_string(f"fb_{fb}")
+        self.osc_handler.udp_socket.sendto(fb_enable_osc, (OSC_HOST, OSC_PORT))
+
+    
 
