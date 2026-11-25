@@ -1,8 +1,6 @@
 import sys
 import json
 import logging
-import threading
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from handlers.browser import BrowserHandler
@@ -11,7 +9,6 @@ from handlers.osc import OscHandler, OSC_HOST, OSC_PORT, osc_string
 from handlers.audio import (
     AudioHandler,
     AudioOutputRouter,
-    BluetoothInputRouter,
     BLUETOOTH_CAPTURE_SINK,
 )
 from schema import DefaultMenuItem, ShaderItem, SettingsMenuItem, ShaderPackItem
@@ -63,46 +60,14 @@ class DefaultListWidget(QListWidget):
 
 
 class DefaultMenu(QWidget):
-    bluetooth_route_checked = pyqtSignal(int, bool)
-
     def __init__(self):
         super().__init__()
 
-        self.active_shader_pack = None
         settings_path = Path(__file__).resolve().parent / "configs" / "settings.json"
         with settings_path.open("r", encoding="utf-8") as settings_file:
             self.app_settings = json.load(settings_file)
 
-
-        configured_shader_directory = Path(self.app_settings["shaders"]["directory_path"])
-        self.shader_directory = (
-            configured_shader_directory
-            if configured_shader_directory.is_absolute()
-            else Path(__file__).resolve().parent / configured_shader_directory
-        )
-        manifest_exists: bool = False
-        for file_path in self.shader_directory.rglob("manifest.json"):
-            with file_path.open("r", encoding="utf-8") as manifest_file:
-                self.manifest_data = json.load(manifest_file)
-                manifest_exists = True
-        if not manifest_exists:
-            raise FileNotFoundError("No manifest.json found in shader directory")
-
-        # Populate shaders with all available shader from shader pack
-        shader_pack_data = self.manifest_data["pack_names"]
-        self.shader_packs = {}    
-        for pack_name, pack_data in shader_pack_data.items():
-            self.shader_packs[pack_name] = ShaderPackItem()
-            current_pack_shaders = {}
-            for name in pack_data.keys():
-                current = ShaderItem(
-                    on_state_msg="on",
-                    frag_shader_path=pack_data[name].get("fragment"),
-                    vert_shader_path=pack_data[name].get("vertex"),
-                )
-                current_pack_shaders[name] = current
-            self.shader_packs[pack_name].shaders = current_pack_shaders
-            
+        default_shader_dir = Path(self.app_settings["shaders"]["directory_path"])
 
         self.settings = {
             "enable_midi": SettingsMenuItem(
@@ -111,7 +76,7 @@ class DefaultMenu(QWidget):
                 linked_function=self.set_midi_enabled,
             ),
             "enable_audio_input": SettingsMenuItem(
-                status_labels=["disabled", "audio_file","bluetooth"],
+                status_labels=["disabled", "audio_file"],
                 linked_function=self.set_audio_input_enabled,
             ),
             "enable_audio_output": SettingsMenuItem(
@@ -122,23 +87,15 @@ class DefaultMenu(QWidget):
         }
 
         # Add handlers
-        self.browser_handler = BrowserHandler()
         self.osc_handler = OscHandler()
         self.audio_handler = None
         self.active_shader = None
         self.active_shader_owner = None
 
-        # Audio mode state: 0=disabled, 1=bluetooth, 2=audio_file
+        # Audio mode state: 0=disabled, 1=audio_file
         self.audio_mode = 0
-        self.bluetooth_audio_handler = None
         self.file_audio_handler = None
         self.output_router = AudioOutputRouter(self._audio_output_failed)
-        self.bluetooth_input_router = BluetoothInputRouter()
-        self._bluetooth_route_lock = threading.Lock()
-        self._bluetooth_route_executor = ThreadPoolExecutor(max_workers=1)
-        self._bluetooth_route_future = None
-        self._bluetooth_route_generation = 0
-        self.bluetooth_route_checked.connect(self._bluetooth_route_check_finished)
         self.output_device_index = -1
         self.media_devices = QMediaDevices(self)
         self.media_devices.audioOutputsChanged.connect(self._audio_outputs_changed)
@@ -211,13 +168,10 @@ class DefaultMenu(QWidget):
         self.midi_timer = None
 
         # Show shader menu by default
-        self.show_shaders()
-        self.bluetooth_input_router_timer = QTimer(self)
-        self.bluetooth_input_router_timer.timeout.connect(
-            self._poll_bluetooth_input_route
-        )
-        self.bluetooth_input_router_timer.start(250)
-        self._sync_bluetooth_input_route()
+        
+        self.browser_handler = BrowserHandler(default_shader_dir)
+        self.current_browser_filter = self.app_settings["shaders"]["file_extensions"]
+        self.show_shaders(self.browser_handler)
 
     def update_selected_row(self, selected_row: int):
         self.clear_message()
@@ -266,17 +220,17 @@ class DefaultMenu(QWidget):
             if row is not None:
                 row.deleteLater()
 
-    def show_shaders(self):
+    def show_shaders(self, browser_handler: BrowserHandler):
         self.clear_message()
         # Show shader menu
         self.current_page = "shaders"
         self.title.setText("SHADER")
         self.list_widget.clear()
         self.shader_status_labels.clear()
-        for pack in self.shader_packs.values():
-            pack.state = False
+        self.current_browser_filter = [".frag", ".fs"]
+        browser_handler.populate(self.list_widget, browser_filter=self.current_browser_filter)
+
         self.active_shader_pack = None
-        self._populate_menu(self.shader_packs)
         self.list_widget.setCurrentRow(0)
 
     def show_settings(self):
@@ -352,79 +306,20 @@ class DefaultMenu(QWidget):
     def set_audio_input_enabled(self, enabled: bool) -> bool:
         """
         Cycle through audio modes:
-        - Disabled (0)  → Audio File (1) → Bluetooth (2) → Disabled (0)
+        - Disabled (0) → Audio File (1) → Disabled (0)
         
         When enabled=True, advance to next mode.
         When enabled=False, go to disabled mode.
-        
-        When switching away from Bluetooth mode, its input device is disconnected.
         """
         try:
-            # Track previous mode to disable Bluetooth if leaving Bluetooth mode
-            previous_mode = self.audio_mode
-            
             if not enabled:
-                # Disable all audio modes
                 self._stop_all_audio()
-                # Disconnect only the input device, leaving output devices available.
-                if previous_mode == 2:
-                    self._disconnect_bluetooth_input()
                 self.audio_mode = 0
-                self._sync_bluetooth_input_route()
                 return False
             
-            # Cycle to next audio mode: 0 → 1 → 2 → 0
-            self.audio_mode = (self.audio_mode + 1) % 3
-            
-            if self.audio_mode == 2:
-                # Switch to Bluetooth mode
+            self.audio_mode = (self.audio_mode + 1) % 2
+            if self.audio_mode == 1:
                 self._stop_all_audio()
-                if not self._sync_bluetooth_input_route():
-                    self.audio_mode = 0
-                    self._sync_bluetooth_input_route()
-                    return False
-                if self.bluetooth_audio_handler is None:
-                    self.bluetooth_audio_handler = AudioHandler(
-                        self.osc_handler,
-                        enable_bluetooth=True
-                    )
-                    self.bluetooth_audio_handler.set_output_router(self.output_router)
-                
-                # Scan for available devices without blocking
-                self._update_message("Scanning for Bluetooth devices...")
-                devices = self.bluetooth_audio_handler.scan_bluetooth_devices()
-                
-                if not devices:
-                    self._update_message("No Bluetooth devices found")
-                    # Reset to disabled mode if no devices found
-                    self.audio_mode = 0
-                    self._sync_bluetooth_input_route()
-                    return False
-                
-                # Try to reconnect to saved device first
-                if self.bluetooth_audio_handler.load_bluetooth_config():
-                    self._update_message("Reconnected to saved device")
-                    self.bluetooth_audio_handler.play()
-                    return True
-                
-                # No saved device, show user available devices in UI
-                # Don't auto-connect - let user select which device to use
-                device_names = [f"{dev.name} ({dev.mac_address})" for dev in devices]
-                self._update_message(f"Found devices: {', '.join(device_names[:2])}")
-                logger.info(f"Found {len(devices)} Bluetooth devices: {device_names}")
-                
-                # For now, just show the available devices without connecting
-                # User can pair their device first if needed
-                return True
-            
-            elif self.audio_mode == 1:
-                # Switch to file audio and disconnect the previous Bluetooth input.
-                self._stop_all_audio()
-                if not self._sync_bluetooth_input_route():
-                    self.audio_mode = 0
-                    return False
-                if previous_mode == 2:
-                    self._disconnect_bluetooth_input()
                 if self.file_audio_handler is None:
                     self.file_audio_handler = AudioHandler(self.osc_handler)
                     self.file_audio_handler.set_output_router(self.output_router)
@@ -432,63 +327,20 @@ class DefaultMenu(QWidget):
                 self._update_message(f"Playing audio file: {self.file_audio_handler.active_audio_file}")
                 return True
             
-            else:  # audio_mode == 0
-                # Disabled (disconnect the previous Bluetooth input).
+            # audio_mode == 0
+            else:
                 self._stop_all_audio()
-                self._sync_bluetooth_input_route()
-                if previous_mode == 2:
-                    self._disconnect_bluetooth_input()
                 return False
         except (ImportError, FileNotFoundError) as error:
             # Only catch setup errors, not connection errors
             self._stop_all_audio()
             self.audio_mode = 0
-            self._sync_bluetooth_input_route()
             self._update_message(f"Could not enable audio: {error}")
             return False
 
-    def _sync_bluetooth_input_route(self) -> bool:
-        self._bluetooth_route_generation += 1
-        with self._bluetooth_route_lock:
-            succeeded = self.bluetooth_input_router.set_enabled(self.audio_mode == 1)
-        self._show_bluetooth_route_result(succeeded)
-        return succeeded
-
-    def _poll_bluetooth_input_route(self) -> None:
-        if self._bluetooth_route_future is not None and not self._bluetooth_route_future.done():
-            return
-        generation = self._bluetooth_route_generation
-
-        def check_route():
-            try:
-                with self._bluetooth_route_lock:
-                    succeeded = self.bluetooth_input_router.sync()
-            except Exception:
-                logger.exception("Could not synchronize Bluetooth audio route")
-                succeeded = False
-            self.bluetooth_route_checked.emit(generation, bool(succeeded))
-
-        self._bluetooth_route_future = self._bluetooth_route_executor.submit(check_route)
-
-    def _bluetooth_route_check_finished(self, generation: int, succeeded: bool) -> None:
-        if generation == self._bluetooth_route_generation:
-            self._show_bluetooth_route_result(succeeded)
-
-    def _show_bluetooth_route_result(self, succeeded: bool) -> None:
-        if not succeeded:
-            self.message_bar.setText(
-                "Could not route Bluetooth audio through the app"
-            )
-        elif (
-            self.message_bar.text()
-            == "Could not route Bluetooth audio through the app"
-        ):
-            self.message_bar.clear()
-
     def _apply_audio_output(self) -> None:
-        for handler in (self.bluetooth_audio_handler, self.file_audio_handler):
-            if handler is not None:
-                handler.set_output_router(self.output_router)
+        if self.file_audio_handler is not None:
+            self.file_audio_handler.set_output_router(self.output_router)
 
     def _audio_output_failed(self, name: str) -> None:
         # Handles closing output router and logging failure
@@ -546,23 +398,11 @@ class DefaultMenu(QWidget):
     
     def _stop_all_audio(self):
         """Stop all audio handlers."""
-        if self.bluetooth_audio_handler is not None:
-            try:
-                self.bluetooth_audio_handler.stop()
-            except Exception:
-                pass
         if self.file_audio_handler is not None:
             try:
                 self.file_audio_handler.stop()
             except Exception:
                 pass
-
-    def _disconnect_bluetooth_input(self) -> None:
-        """Disconnect the app's Bluetooth input without affecting other devices."""
-        handler = self.bluetooth_audio_handler
-        if handler is not None and handler.use_bluetooth:
-            if not handler.disconnect_bluetooth_device():
-                logger.warning("Could not disconnect Bluetooth input device")
 
     def _update_message(self, text: str) -> None:
         """Update message bar text and immediately refresh the GUI """
@@ -615,7 +455,7 @@ class DefaultMenu(QWidget):
         # Special handling for audio mode cycling - always advance mode
         if name == "enable_audio_input":
             # For audio, we always pass True to cycle through modes
-            # We never toggle off/on, we just cycle through 3 modes
+            # We never toggle off/on, we cycle between disabled and file audio
             state = current_setting.linked_function(True)
             
             # Always keep button state as True (we're in audio mode selection)
@@ -641,25 +481,6 @@ class DefaultMenu(QWidget):
                 self.status_labels[name].setText(current_setting.on_state_msg)
             else:
                 self.status_labels[name].setText(current_setting.off_state_msg)
-
-    def _run_shader_pack_option(self, name: str, item: QListWidgetItem):
-        if name not in self.shader_packs.keys():
-            self._update_message("Attempting to run missing shader pack")
-            return
-
-        selected_pack = self.shader_packs[name]
-        if selected_pack.state:
-            self._collapse_menu(name)
-            selected_pack.state = False
-            return
-
-        self.active_shader_pack = selected_pack
-        self._populate_menu(
-            selected_pack.shaders, offset=True, after_item=item, pack_name=name
-        )
-        selected_pack.state = True
-        self.send_shader_pack(name)
-
 
     def _run_shader_option(self, name: str, pack_name: str):
         pack = self.shader_packs[pack_name]
@@ -701,15 +522,16 @@ class DefaultMenu(QWidget):
     def activate_item(self, item):
         self.clear_message()
         name = item.data(Qt.ItemDataRole.UserRole)
+        if Path(name).is_dir():
+            self.browser_handler.toggle_directory(self.list_widget, item, self.current_browser_filter)
+            return
+
         if self.current_page == "settings":
             self._run_settings_option(name)
             return
         if self.current_page == "shaders":
-            pack_name = item.data(Qt.ItemDataRole.UserRole + 2)
-            if pack_name is None:
-                self._run_shader_pack_option(name, item)
-            else:
-                self._run_shader_option(name, pack_name)
+
+            self.send_shader(name)
             return
         if self.current_page == "browser":
             try:
@@ -722,10 +544,6 @@ class DefaultMenu(QWidget):
         packet = osc_string("/shader") + osc_string(",s") + osc_string(name)
         self.osc_handler.udp_socket.sendto(packet, (OSC_HOST, OSC_PORT))
 
-    def send_shader_pack(self, name):
-        packet = osc_string("/shader_pack") + osc_string(",s") + osc_string(name)
-        self.osc_handler.udp_socket.sendto(packet, (OSC_HOST, OSC_PORT))
-
     def keyPressEvent(self, event: QKeyEvent):
         if event.key() == Qt.Key.Key_Escape:
             self.close()
@@ -735,22 +553,14 @@ class DefaultMenu(QWidget):
     def closeEvent(self, event):
         """Clean up all resources on application exit.
         
-        Stop audio and disconnect the Bluetooth input before exiting.
+        Stop audio before exiting.
         """
         logger.info("Application closing - cleaning up resources...")
-        self.bluetooth_input_router_timer.stop()
-        self._bluetooth_route_generation += 1
-        self._bluetooth_route_executor.shutdown(wait=True)
 
         # Stop all audio playback
         self.set_midi_enabled(False)
         self._stop_all_audio()
         self.output_router.disconnect()
-        
-        # Disconnect the input device without affecting unrelated output devices.
-        self._disconnect_bluetooth_input()
-        if not self.bluetooth_input_router.restore():
-            logger.error("Could not restore Bluetooth audio route on exit")
         
         # Close OSC socket
         self.osc_handler.udp_socket.close()

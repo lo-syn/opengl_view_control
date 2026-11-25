@@ -10,23 +10,22 @@ _DEPTH_ROLE = Qt.ItemDataRole.UserRole + 2
 DEFAULT_BROWSER_PATH = r"C:\Users\Laurence\Documents\Video Art\opengl_view\bin\data"
 
 class BrowserHandler:
-    def __init__(self, directory: Path | str | None = None):
-        self.directory = (
-            Path(directory)
-            if directory is not None
-            else Path(DEFAULT_BROWSER_PATH)
-        )
+    def __init__(self, directory: Path | str):
+        self.directory = Path(directory) if not isinstance(directory, Path) else directory
         self._expanded_directories: set[Path] = set()
 
-    def populate(self, list_widget: QListWidget) -> None:
+    def populate(self, list_widget: QListWidget, browser_filter: list[str] | None = None) -> None:
         self._expanded_directories.clear()
         list_widget.clear()
         entries = sorted(self.directory.iterdir(), key=lambda entry: entry.name.casefold())
 
         for entry in entries:
-            list_widget.addItem(self._create_item(entry))
+            if entry.is_dir():
+                list_widget.addItem(self._create_item(entry))
+            elif browser_filter is None or entry.suffix in browser_filter:
+                list_widget.addItem(self._create_item(entry))
 
-    def toggle_directory(self, list_widget: QListWidget, item: QListWidgetItem) -> None:
+    def toggle_directory(self, list_widget: QListWidget, item: QListWidgetItem, browser_filter: list[str] | None = None) -> None:
         if item is None or not item.data(_DIRECTORY_ROLE):
             return
 
@@ -38,10 +37,15 @@ class BrowserHandler:
         entries = sorted(directory.iterdir(), key=lambda entry: entry.name.casefold())
         insertion_row = list_widget.row(item) + 1
         depth = item.data(_DEPTH_ROLE) + 1
-        for offset, entry in enumerate(entries):
-            list_widget.insertItem(
-                insertion_row + offset, self._create_item(entry, depth=depth)
-            )
+        # Insert entries for the directory, respecting the browser filter and depth
+        # Directories are allowed regardless of the browser filter
+        inserted_count = 0
+        for entry in entries:
+            if browser_filter is None or entry.is_dir() or entry.suffix in browser_filter:
+                list_widget.insertItem(
+                    insertion_row + inserted_count, self._create_item(entry, depth=depth)
+                )
+                inserted_count += 1
         self._expanded_directories.add(directory)
 
     def _collapse_directory(self, list_widget: QListWidget, directory: Path) -> None:
