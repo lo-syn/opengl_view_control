@@ -1,12 +1,13 @@
 import mido
 import json
+from pathlib import Path
 
-from osc_handler import OscHandler
+from .osc import OscHandler
 
 
 
 # Import MIDI related settings from JSON file
-with open("settings.json", "r") as f:
+with open(Path(__file__).resolve().parent.parent / "configs" / "settings.json", "r") as f:
     settings = json.load(f)
 
 MIDI_INPUT_NAME: str = settings["midi"].get("midi_input_name")  # Default MIDI input name

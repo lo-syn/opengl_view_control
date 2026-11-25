@@ -5,10 +5,10 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from browser import BrowserHandler
-from midi_handler import MidiHandler
-from osc_handler import OscHandler, OSC_HOST, OSC_PORT, osc_string
-from audio_handler import (
+from handlers.browser import BrowserHandler
+from handlers.midi import MidiHandler
+from handlers.osc import OscHandler, OSC_HOST, OSC_PORT, osc_string
+from handlers.audio import (
     AudioHandler,
     AudioOutputRouter,
     BluetoothInputRouter,
@@ -69,7 +69,7 @@ class DefaultMenu(QWidget):
         super().__init__()
 
         self.active_shader_pack = None
-        settings_path = Path(__file__).resolve().parent / "settings.json"
+        settings_path = Path(__file__).resolve().parent / "configs" / "settings.json"
         with settings_path.open("r", encoding="utf-8") as settings_file:
             self.app_settings = json.load(settings_file)
 
@@ -339,9 +339,11 @@ class DefaultMenu(QWidget):
 
             return True
 
+        # Handles disabling QTimer
         if self.midi_timer is not None:
             self.midi_timer.stop()
             self.midi_timer = None
+        # Handles disabling MIDI input
         if self.midi_handler is not None:
             self.midi_handler.close_midi_input()
             self.midi_handler = None

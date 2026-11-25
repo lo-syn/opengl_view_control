@@ -23,11 +23,11 @@ from PyQt6.QtMultimedia import (
     QMediaCaptureSession,
 )
 
-from osc_handler import OscHandler
-from bluetooth_audio import BluetoothAudioManager, BluetoothDevice
+from .osc import OscHandler
+from .bluetooth import BluetoothAudioManager, BluetoothDevice
 
 # Import MIDI related settings from JSON file
-with open("settings.json", "r") as f:
+with open(Path(__file__).resolve().parent.parent / "configs" / "settings.json", "r") as f:
     settings = json.load(f)
 
 AUDIO_FILE_PATH = Path(__file__).resolve().parent / settings["audio"]["file_path"]
