@@ -1,0 +1,39 @@
+{
+    "shaders": {
+        "directory_path": "C:\\of\\apps\\myApps\\opengl_view\\bin\\data\\Shaders"
+    },
+    "midi": {
+        "midi_input_name": "nanoKONTROL2 0",
+        "midi_cc_to_osc": {
+            "120": "/u_x0",
+            "121": "/u_x1",
+            "122": "/u_x2",
+            "123": "/u_x3"
+        },
+        "midi_audio_gain_cc_to_osc": {
+            "16": "/u_x0",
+            "17": "/u_x1",
+            "18": "/u_x2",
+            "19": "/u_x3"
+        }
+    },
+    "audio": {
+        "file_path": "bin/data/Plata - Kru (MssingNo Remix).mp3",
+        "osc_addresses": [
+            "/u_x0",
+            "/u_x1",
+            "/u_x2",
+            "/u_x3"
+        ],
+        "bluetooth": {
+            "input": {
+                "device_name": "Laurence's S23",
+                "pulseaudio_input_device": "bluez_source.f8_5b_6e_c1_75_d8.a2dp_source"
+            },
+            "output": {
+                "device_name": "Laurence's S23",
+                "pulseaudio_output_device": "bluez_sink.f8_5b_6e_c1_75_d8.a2dp_sink"
+            }
+        }
+    }
+}
