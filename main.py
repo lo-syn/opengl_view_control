@@ -116,7 +116,7 @@ class DefaultMenu(QWidget):
         self.osc_handler = OscHandler()
         self.shader_handler = ShaderHandler(self.osc_handler)
         self.framebuffer_handler = FrameBufferHandler(self.osc_handler)
-        #self.isf_parser = ISFHandler(self.default_shader_dir / "plasma.fs")
+        self.isf_handler = ISFHandler()
         self.audio_handler = None
         self.active_shader = "test"
         self.active_shader_owner = None
@@ -294,11 +294,11 @@ class DefaultMenu(QWidget):
                 return
             shader = Path(shader_path).name
             #TODO: integrate ISFHandler to parse shader metadata if needed
-            isf_data= ISFHandler(shader_path)
-            print(isf_data.inputs)
-            print(isf_data.description)
-            print(isf_data.credit)
-            print(isf_data.isfvsn)
+            is_isf, _, isf_metadata = self.isf_handler.parse_file(shader_path)
+            if is_isf:
+                self._update_message(f"Loaded ISF shader: {isf_metadata.name or shader}")
+            else:
+                self._update_message(f"Loaded non-ISF shader: {shader}")
             label = getattr(self, f"fb{KEY_PRESS_TO_FB_MAP[key_no]}_label")
             is_loaded = self.framebuffer_handler.load_to_fb(KEY_PRESS_TO_FB_MAP[key_no], shader)
             label.setText(f"fb{KEY_PRESS_TO_FB_MAP[key_no]}: {is_loaded}")
@@ -395,7 +395,7 @@ class DefaultMenu(QWidget):
         self.settings["enable_audio_output"].state = False
         if self.current_page == "settings" and "enable_audio_output" in self.status_labels:
             self.status_labels["enable_audio_output"].setText("disabled")
-        self.message_bar.setText(f"Unable to connect to {name}")
+        self._update_message(f"Unable to connect to {name}")
 
     def _audio_outputs_changed(self) -> None:
         device = self.output_router.device
