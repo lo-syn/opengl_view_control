@@ -165,6 +165,7 @@ class DefaultMenu(QWidget):
         self.fb0_label = QLabel()
         self.fb1_label = QLabel()
         self.fb2_label = QLabel()
+        # Add labels for framebuffer status
         for index, label in enumerate(
             (self.fb0_label, self.fb1_label, self.fb2_label)
         ):
@@ -176,6 +177,17 @@ class DefaultMenu(QWidget):
             status_layout.addWidget(label, 1)
         layout.addWidget(self.status_bar)
         self.update_framebuffer_status(self.framebuffer_handler)
+
+
+        self.secondary_status_bar = QWidget()
+        self.secondary_status_bar.setMinimumHeight(28)
+        self.secondary_status_bar.setStyleSheet(
+            "QWidget { background-color: #222; color: #fff; }"
+        )
+        self.secondary_status_layout = QHBoxLayout(self.secondary_status_bar)
+        self.secondary_status_layout.setContentsMargins(0, 0, 0, 0)
+        self.secondary_status_layout.setSpacing(0)
+        layout.addWidget(self.secondary_status_bar)
 
         self.list_widget = DefaultListWidget()
         self.list_widget.setSpacing(3)
@@ -295,11 +307,35 @@ class DefaultMenu(QWidget):
             shader = Path(shader_path).name
             #TODO: integrate ISFHandler to parse shader metadata if needed
             is_isf, _, isf_metadata = self.isf_handler.parse_file(shader_path)
+            
+            while self.secondary_status_layout.count():
+                item = self.secondary_status_layout.takeAt(0)
+                if item.widget():
+                    item.widget().deleteLater()
+
+            parameter_labels = []
             if is_isf:
+                for param in isf_metadata.inputs:
+                    label = param.get("NAME", "")
+                    parameter_labels.append(param.get("NAME", ""))
+ 
+                for index, label in enumerate(
+                    parameter_labels
+                ):
+                    label_widget = QLabel(label)
+                    label_widget.setAlignment(
+                        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+                    )
+                    separator = " border-right: 1px solid #555;" if index < 2 else ""
+                    label_widget.setStyleSheet(f"QLabel {{ padding: 4px 6px;{separator} }}")
+                    self.secondary_status_layout.addWidget(label_widget, 1)
+
                 self._update_message(f"Loaded ISF shader: {isf_metadata.name or shader}")
             else:
                 self._update_message(f"Loaded non-ISF shader: {shader}")
+
             label = getattr(self, f"fb{KEY_PRESS_TO_FB_MAP[key_no]}_label")
+
             is_loaded = self.framebuffer_handler.load_to_fb(KEY_PRESS_TO_FB_MAP[key_no], shader)
             label.setText(f"fb{KEY_PRESS_TO_FB_MAP[key_no]}: {is_loaded}")
 
