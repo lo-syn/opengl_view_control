@@ -42,6 +42,7 @@ class DefaultListWidget(QListWidget):
     keypress1 = pyqtSignal(QListWidgetItem)
     keypress2 = pyqtSignal(QListWidgetItem)
     keypress3 = pyqtSignal(QListWidgetItem)
+    keypressQ = pyqtSignal()
 
     def keyPressEvent(self, event: QKeyEvent):
          # Handle key events for activating items and navigating
@@ -71,6 +72,10 @@ class DefaultListWidget(QListWidget):
             item = self.currentItem()
             if item is not None:
                 self.keypress3.emit(item)
+            event.accept()
+            return
+        if event.key() == Qt.Key.Key_Q:
+            self.keypressQ.emit()
             event.accept()
             return
         if event.key() == Qt.Key.Key_Right:
@@ -116,6 +121,7 @@ class DefaultMenu(QWidget):
         self.osc_handler = OscHandler()
         self.shader_handler = ShaderHandler(self.osc_handler)
         self.framebuffer_handler = FrameBufferHandler(self.osc_handler)
+        self._current_fb = None
         self.isf_handler = ISFHandler()
         self.audio_handler = None
         self.active_shader = "test"
@@ -162,6 +168,7 @@ class DefaultMenu(QWidget):
         status_layout = QHBoxLayout(self.status_bar)
         status_layout.setContentsMargins(0, 0, 0, 0)
         status_layout.setSpacing(0)
+        self.fb_inputs = {0: None, 1: None, 2: None}
         self.fb0_label = QLabel()
         self.fb1_label = QLabel()
         self.fb2_label = QLabel()
@@ -202,6 +209,7 @@ class DefaultMenu(QWidget):
         self.list_widget.keypress1.connect(lambda item: self.number_key_pressed(item, 1))
         self.list_widget.keypress2.connect(lambda item: self.number_key_pressed(item, 2))
         self.list_widget.keypress3.connect(lambda item: self.number_key_pressed(item, 3))
+        self.list_widget.keypressQ.connect(lambda:self.selection_key_pressed("Q"))
         self.list_widget.navigateLeft.connect(self.navigate_left)
         self.list_widget.closeRequested.connect(self.close)
 
@@ -298,6 +306,18 @@ class DefaultMenu(QWidget):
         elif self.current_page == "settings":
             self.show_shaders()
 
+    def selection_key_pressed(self, key_letter: str):
+        if self.current_page == "shaders":
+            fb = KEY_PRESS_TO_FB_MAP.get(key_letter)
+            if fb is None:
+                return
+            if not self.fb_inputs.get(fb):
+                return
+            
+            self.midi_handler.set_destination_mapping(self.fb_inputs[fb])
+            self.osc_handler.set_current_address(f"/fb{fb}")
+
+
     def number_key_pressed(self, item: QListWidgetItem, key_no: int):
         if self.current_page == "shaders":
             # Sets the shader to the specified framebuffer
@@ -305,9 +325,11 @@ class DefaultMenu(QWidget):
             if Path(shader_path).is_dir():
                 return
             shader = Path(shader_path).name
-            #TODO: integrate ISFHandler to parse shader metadata if needed
+
+            # Check if the shader is an ISF shader and parse its metadata
             is_isf, _, isf_metadata = self.isf_handler.parse_file(shader_path)
-            isf_inputs = self.isf_handler.parse_input(isf_metadata)
+            self.isf_inputs = self.isf_handler.parse_input(isf_metadata)
+            self.fb_inputs[KEY_PRESS_TO_FB_MAP[key_no]] = self.isf_inputs
 
             # Clear the secondary status layout before adding new parameter labels
             while self.secondary_status_layout.count():
@@ -317,7 +339,7 @@ class DefaultMenu(QWidget):
 
             parameter_labels = []
             if is_isf:
-                for input_name, isf_input in isf_inputs.items():
+                for input_name, isf_input in self.isf_inputs.items():
                     parameter_labels.append(isf_input.label or input_name)
  
                 for index, label in enumerate(
@@ -333,6 +355,7 @@ class DefaultMenu(QWidget):
 
                 self._update_message(f"Loaded ISF shader: {isf_metadata.name or shader}")
             else:
+
                 self._update_message(f"Loaded non-ISF shader: {shader}")
 
             label = getattr(self, f"fb{KEY_PRESS_TO_FB_MAP[key_no]}_label")
@@ -341,7 +364,7 @@ class DefaultMenu(QWidget):
             label.setText(f"fb{KEY_PRESS_TO_FB_MAP[key_no]}: {is_loaded}")
 
             # Sends the enable framebuffer command via OSC
-            self.framebuffer_handler.enable_fb(KEY_PRESS_TO_FB_MAP[key_no])
+            self._current_fb = self.framebuffer_handler.enable_fb(KEY_PRESS_TO_FB_MAP[key_no])
             # Sends the shader filepath via OSC
             if not is_loaded:
                 self.shader_handler.send_shader(shader_path, reset=True)

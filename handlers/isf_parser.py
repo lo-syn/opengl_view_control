@@ -108,6 +108,7 @@ class ISFHandler:
         processed_inputs = {}
         inputs: list[dict[str, Any]] = getattr(metadata, "inputs", None)
         for i in inputs:
+            # Prioritize using the LABEL as the key for processed inputs, fallback to NAME if LABEL is not available
             name = i.get("NAME")
             label = i.get("LABEL")
             isf_input = ISFInput(name=i.get("NAME"), label=i.get("LABEL"), type=i.get("TYPE"), default=i.get("DEFAULT"), min=i.get("MIN"), max=i.get("MAX"))

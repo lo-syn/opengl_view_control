@@ -32,24 +32,28 @@ class OscHandler:
         self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         logger.info(f"OscHandler initialized: {OSC_HOST}:{OSC_PORT}")
 
+    def set_current_address(self, address: str) -> None:
+        self._current_address = address
+
     def set_level(
-        self, address: str, source: Literal["audio", "midi"], value: float
+        self, source: Literal["audio", "midi"], param: str, value: float
     ) -> None:
-        levels = self._levels.setdefault(address, {})
+        levels = self._levels.setdefault(self._current_address, {})
         old_value = levels.get(source, 0.0)
         levels[source] = max(0.0, min(1.0, value))
-        
-        self._send_level(address)
+        self._send_level(self._current_address, param)
 
-    def set_audio_gain(self, address: str, value: float) -> None:
-        self._audio_gains[address] = max(0.0, min(1.0, value))
-        if address in self._levels:
-            self._send_level(address)
+    def set_audio_gain(self, value: float) -> None:
+        self._audio_gains[self._current_address] = max(0.0, min(1.0, value))
+        if self._current_address in self._levels:
+            self._send_level(self._current_address, "audio")
 
-    def _send_level(self, address: str) -> None:
+    def _send_level(self, address: str, param: str = "",) -> None:
         levels = self._levels[address]
         audio = levels.get("audio", 0.0) * self._audio_gains.get(address, 1.0)
         combined = min(1.0, levels.get("midi", 0.0) + audio)
+        if param:
+            address = f"{address}/{param}"
 
         try:
             self.udp_socket.sendto(

@@ -5,12 +5,7 @@
     },
     "midi": {
         "midi_input_name": "nanoKONTROL2 0",
-        "midi_cc_to_osc": {
-            "120": "/u_x0",
-            "121": "/u_x1",
-            "122": "/u_x2",
-            "123": "/u_x3"
-        },
+        "midi_cc_to_osc": [120,121,122,123,124],
         "midi_audio_gain_cc_to_osc": {
             "16": "/u_x0",
             "17": "/u_x1",

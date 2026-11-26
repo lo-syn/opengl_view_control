@@ -4,7 +4,10 @@ from .osc import OSC_HOST, OSC_PORT, OscHandler, osc_message
 KEY_PRESS_TO_FB_MAP = {
     1: 0, # If key 1 is pressed, load to framebuffer 0
     2: 1, # If key 2 is pressed, load to framebuffer 1
-    3: 2  # If key 3 is pressed, load to framebuffer 2
+    3: 2, # If key 3 is pressed, load to framebuffer 2
+    "Q": 0,
+    "W": 1,
+    "E": 2
 }
 
 FRAME_BUFFER_STATE = {
@@ -28,9 +31,10 @@ class FrameBufferHandler:
             self.framebuffer_status[fb_name] = name
         return name
 
-    def enable_fb(self, fb_no: int) -> None:
+    def enable_fb(self, fb_no: int) -> str:
         fb_enable_osc = osc_message(f"/fb{str(fb_no)}", empty=True)
         self.osc_handler.udp_socket.sendto(fb_enable_osc, (OSC_HOST, OSC_PORT))
+        return f"fb{fb_no}"
 
     
 
