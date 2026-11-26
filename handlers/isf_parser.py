@@ -2,11 +2,23 @@ import json5
 import re
 from pathlib import Path
 from typing import Any
+from dataclasses import dataclass
 
 # This file is heavily inspired by the parse used in https://github.com/jimcortez/pyvvisf/blob/main/src/pyvvisf/parser.py
 # Modified to fit with this application, but credit to jimcortez
 
-class ISFMetadata:
+@dataclass
+class ISFInput:
+    """ISF shader input."""
+
+    name: str | None = None
+    label: str | None = None
+    type: str | None = None
+    default: Any = None
+    min: Any = None
+    max: Any = None
+
+class ISFMetaData:
     """ISF shader metadata."""
 
     name: str | None = None
@@ -38,7 +50,7 @@ class ISFHandler:
         self.credit = ""
         self.isfvsn = ""
 
-    def parse_file(self, file_path: str) -> tuple[bool, str|None, ISFMetadata|None]:
+    def parse_file(self, file_path: str) -> tuple[bool, str|None, ISFMetaData|None]:
         """Parse an ISF shader file and return GLSL code and metadata."""
         """Return a tuple indicating if the file is an ISF shader, the GLSL content, and the metadata."""
         content = Path(file_path).read_text(encoding="utf-8")
@@ -48,7 +60,7 @@ class ISFHandler:
 
         if not json_blocks:
             is_isf = False
-            return is_isf, None, ISFMetadata()
+            return is_isf, None, ISFMetaData()
 
         # Parse the first JSON block (ISF uses the first one).
         json_content = "{" + json_blocks[0] + "}"
@@ -62,7 +74,7 @@ class ISFHandler:
         # Remove JSON blocks from GLSL content
         glsl_content = self.json_pattern.sub("", content)
 
-        metadata = ISFMetadata()
+        metadata = ISFMetaData()
         metadata.name = metadata_dict.get("NAME")
         metadata.description = metadata_dict.get("DESCRIPTION")
         metadata.author = metadata_dict.get("AUTHOR", metadata_dict.get("CREDIT"))
@@ -87,3 +99,23 @@ class ISFHandler:
         self.isfvsn = metadata_dict.get("ISFVSN", "")
 
         return True, glsl_content, metadata
+
+    def parse_input(self, metadata: ISFMetaData) -> dict[str, ISFInput]:
+        """Parse an individual input from the ISF metadata."""
+        if not metadata.inputs:
+            return {}
+
+        processed_inputs = {}
+        inputs: list[dict[str, Any]] = getattr(metadata, "inputs", None)
+        for i in inputs:
+            name = i.get("NAME")
+            label = i.get("LABEL")
+            isf_input = ISFInput(name=i.get("NAME"), label=i.get("LABEL"), type=i.get("TYPE"), default=i.get("DEFAULT"), min=i.get("MIN"), max=i.get("MAX"))
+            if label:
+                processed_inputs[label]  = isf_input
+            elif name:
+                processed_inputs[name] = isf_input
+            else:
+                raise ValueError("Input must have either a LABEL or NAME.")
+
+        return processed_inputs

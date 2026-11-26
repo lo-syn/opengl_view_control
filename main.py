@@ -307,7 +307,9 @@ class DefaultMenu(QWidget):
             shader = Path(shader_path).name
             #TODO: integrate ISFHandler to parse shader metadata if needed
             is_isf, _, isf_metadata = self.isf_handler.parse_file(shader_path)
-            
+            isf_inputs = self.isf_handler.parse_input(isf_metadata)
+
+            # Clear the secondary status layout before adding new parameter labels
             while self.secondary_status_layout.count():
                 item = self.secondary_status_layout.takeAt(0)
                 if item.widget():
@@ -315,9 +317,8 @@ class DefaultMenu(QWidget):
 
             parameter_labels = []
             if is_isf:
-                for param in isf_metadata.inputs:
-                    label = param.get("NAME", "")
-                    parameter_labels.append(param.get("NAME", ""))
+                for input_name, isf_input in isf_inputs.items():
+                    parameter_labels.append(isf_input.label or input_name)
  
                 for index, label in enumerate(
                     parameter_labels
