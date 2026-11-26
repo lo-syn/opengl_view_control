@@ -8,6 +8,7 @@ from handlers.midi import MidiHandler
 from handlers.osc import OscHandler
 from handlers.shader import ShaderHandler
 from handlers.framebuffer import FrameBufferHandler, KEY_PRESS_TO_FB_MAP
+from handlers.isf_parser import ISFHandler
 
 from handlers.audio import (
     AudioHandler,
@@ -115,6 +116,7 @@ class DefaultMenu(QWidget):
         self.osc_handler = OscHandler()
         self.shader_handler = ShaderHandler(self.osc_handler)
         self.framebuffer_handler = FrameBufferHandler(self.osc_handler)
+        #self.isf_parser = ISFHandler(self.default_shader_dir / "plasma.fs")
         self.audio_handler = None
         self.active_shader = "test"
         self.active_shader_owner = None
@@ -246,6 +248,7 @@ class DefaultMenu(QWidget):
         self.list_widget.setCurrentRow(0)
 
     def show_browser(self):
+        #TODO: not working
         self.clear_message()
         # Show browser menu
         self.current_page = "browser"
@@ -290,6 +293,12 @@ class DefaultMenu(QWidget):
             if Path(shader_path).is_dir():
                 return
             shader = Path(shader_path).name
+            #TODO: integrate ISFHandler to parse shader metadata if needed
+            isf_data= ISFHandler(shader_path)
+            print(isf_data.inputs)
+            print(isf_data.description)
+            print(isf_data.credit)
+            print(isf_data.isfvsn)
             label = getattr(self, f"fb{KEY_PRESS_TO_FB_MAP[key_no]}_label")
             is_loaded = self.framebuffer_handler.load_to_fb(KEY_PRESS_TO_FB_MAP[key_no], shader)
             label.setText(f"fb{KEY_PRESS_TO_FB_MAP[key_no]}: {is_loaded}")
